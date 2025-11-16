@@ -1,0 +1,180 @@
+╔════════════════════════════════════════════════════════════════════════════════╗
+║                     CURRENT CODEBASE ARCHITECTURE MAP                          ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ENTRY POINT: run_analysis.py (411 lines)                                     │
+│ ├─ main() - Orchestrates full analysis pipeline                             │
+│ ├─ run_baseline_and_device_comparison() - Core simulation workflow          │
+│ ├─ parametric_study_num_devices() - Device count sensitivity               │
+│ ├─ parametric_study_snap_threshold() - Threshold sensitivity               │
+│ └─ generate_final_report() - Report generation                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                    ┌───────────────┴───────────────┐
+                    ↓                               ↓
+        ┌─────────────────────┐       ┌─────────────────────┐
+        │ parameters.py       │       │galloping_model.py   │
+        │ (353 lines)         │       │ (398 lines)         │
+        ├─────────────────────┤       ├─────────────────────┤
+        │ ConductorParams     │       │ GallopingSimulation │
+        │ EnvironmentalParams │  →→→  │ ├─calculate_aero()  │
+        │ DeviceParams        │       │ ├─calculate_device()│
+        │ get_full_params()   │       │ ├─equations_of_mo() │
+        │ calculate_ice_mass()│       │ └─run_simulation()  │
+        │ calc_modal_props()  │       │ compare_results()   │
+        └─────────────────────┘       │ print_comparison()  │
+              ↓                       └─────────────────────┘
+        Physical Params Dict                    │
+        - Conductor specs                       ├─ scipy.integrate
+        - Environmental                         │  .solve_ivp()
+        - Modal properties                      │  (RK45 solver)
+        - Aero coefficients                     │
+        - Device configs                        ↓
+                                        Results Dict
+                                        - Time series
+                                        - Metrics
+                                        - Snap events
+                                        - Energy
+                    ┌──────────────────────────┴──────────────────────┐
+                    ↓                                                   ↓
+        ┌─────────────────────────────┐        ┌──────────────────────────┐
+        │ visualization.py            │        │ File System Output       │
+        │ (556 lines)                 │        ├──────────────────────────┤
+        ├─────────────────────────────┤        │ results/ directory:      │
+        │ plot_time_history()         │    →→→ │ ├─ *.png (plots)        │
+        │ plot_phase_portrait()       │        │ ├─ *summary.txt         │
+        │ plot_energy_history()       │        │ └─ FINAL_REPORT.txt     │
+        │ plot_device_activity()      │        │                          │
+        │ plot_parametric_study()     │        │ PNG outputs (300 dpi):  │
+        │ create_summary_figure()     │        │ - baseline_time_history │
+        │ save_results_to_file()      │        │ - device_time_history   │
+        │ setup_plot_style()          │        │ - comparison_time_hist  │
+        └─────────────────────────────┘        │ - *_phase_portrait      │
+                                               │ - *_energy             │
+                                               │ - device_activity      │
+                                               │ - summary_figure       │
+                                               │ - parametric_*.png     │
+                                               └──────────────────────────┘
+
+╔════════════════════════════════════════════════════════════════════════════════╗
+║                 RECOMMENDED NEW WORKORDER SYSTEM STRUCTURE                     ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ src/workorder_system/                    NEW MODULE STRUCTURE                 │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                                │
+│  ┌─────────────────────┐  ┌─────────────────────┐  ┌──────────────────────┐ │
+│  │ models.py          │  │ reconciler.py       │  │ nisc_connector.py    │ │
+│  ├─────────────────────┤  ├─────────────────────┤  ├──────────────────────┤ │
+│  │ WorkOrder           │  │ ReconciliationEngine│  │ NISCAPIClient        │ │
+│  │ LineItem            │  │ ├─match_workorders()│  │ ├─connect()          │ │
+│  │ ReconcRecord        │  │ ├─detect_diffs()    │  │ ├─fetch_workorders() │ │
+│  │ AuditLog            │  │ ├─generate_report() │  │ ├─transform_data()   │ │
+│  │ Status enums        │  │ └─update_state()    │  │ └─handle_errors()    │ │
+│  └─────────────────────┘  └─────────────────────┘  └──────────────────────┘ │
+│          │                         │                         │                │
+│          └─────────────┬───────────┴──────────────┬──────────┘                │
+│                        ↓                          ↓                           │
+│            ┌──────────────────────┐  ┌──────────────────────────┐             │
+│            │ storage.py           │  │ validators.py            │             │
+│            ├──────────────────────┤  ├──────────────────────────┤             │
+│            │ SQLAlchemy ORM       │  │ WorkOrderValidator       │             │
+│            │ ├─save_workorder()   │  │ ├─validate_format()      │             │
+│            │ ├─query_workorders() │  │ ├─validate_amounts()     │             │
+│            │ ├─update_status()    │  │ ├─check_business_rules() │             │
+│            │ └─get_discrepancies()│  │ └─cross_check_fields()   │             │
+│            └──────────────────────┘  └──────────────────────────┘             │
+│                        │                                                      │
+│                        ↓                                                      │
+│            ┌──────────────────────────────────────┐                           │
+│            │ PostgreSQL / SQLite Database         │                           │
+│            │ ├─ workorders table                  │                           │
+│            │ ├─ line_items table                  │                           │
+│            │ ├─ reconciliation_records table      │                           │
+│            │ ├─ discrepancies table               │                           │
+│            │ └─ audit_logs table                  │                           │
+│            └──────────────────────────────────────┘                           │
+│                                                                                │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+                              ↑
+                              │
+                    ┌─────────┴──────────┐
+                    ↓                    ↓
+        ┌──────────────────┐  ┌──────────────────┐
+        │ tests/           │  │ config/          │
+        ├──────────────────┤  ├──────────────────┤
+        │ test_models.py   │  │ dev_config.yaml  │
+        │ test_reconcil.py │  │ prod_config.yaml │
+        │ test_nisc.py     │  │ test_config.yaml │
+        │ test_storage.py  │  └──────────────────┘
+        └──────────────────┘
+
+╔════════════════════════════════════════════════════════════════════════════════╗
+║                          DATA FLOW: RECONCILIATION PIPELINE                    ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+    NISC System          Internal System          Report Output
+         │                     │                         │
+         │                     │                         │
+         ├─→ NISC API ─→ nisc_connector.py               │
+         │   (fetch)    (transform & map)               │
+         │                     │                         │
+         │                  models.py                    │
+         │              (WorkOrder entity)               │
+         │                     │                         │
+         │              validators.py                    │
+         │           (check business rules)              │
+         │                     │                         │
+         │              storage.py                       │
+         │          (save to database)                   │
+         │                     │                         │
+         ├─→ NISC Export    Internal DB                  │
+         │   (current)        │                          │
+         │                    ├─→ reconciler.py ─→→ reconciliation_report.html
+         │                    │  (detect diffs,        (visual dashboard)
+         │                    │   generate reports,
+         │                    │   suggest matches)
+         │                    │
+         │                    └─→ PDF export
+         │                       (detailed findings)
+         │
+         └──────────────────────→ audit_logs table
+                           (full transaction history)
+
+╔════════════════════════════════════════════════════════════════════════════════╗
+║                            KEY DESIGN DECISIONS                                ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+1. SEPARATION OF CONCERNS
+   ✓ Galloping module remains unchanged
+   ✓ New workorder_system is completely decoupled
+   ✓ Shared utilities in separate 'shared' module
+   ✓ No cross-contamination of business logic
+
+2. DATA PERSISTENCE
+   ✓ SQLAlchemy ORM for DB abstraction
+   ✓ Support for both SQLite (dev) and PostgreSQL (prod)
+   ✓ Database migrations via Alembic
+   ✓ Full audit trail via separate audit_logs table
+
+3. TESTING STRATEGY
+   ✓ Pytest framework for new code
+   ✓ Separate test modules per component
+   ✓ Mock NISC API for unit tests
+   ✓ Fixtures for database testing
+
+4. ERROR HANDLING
+   ✓ Custom exception hierarchy
+   ✓ Retry logic in NISC connector
+   ✓ Validation errors with detailed messages
+   ✓ Comprehensive logging throughout
+
+5. CONFIGURATION MANAGEMENT
+   ✓ YAML-based configuration files
+   ✓ Environment-specific settings
+   ✓ Secrets management (passwords, API keys)
+   ✓ Runtime configuration overrides
+
